@@ -1,0 +1,84 @@
+# First run on the VPS:  cp .env.example .env   (fill in values, incl. TUNNEL_TOKEN)
+#
+# Cloudflare Tunnel one-time setup (dashboard-managed tunnel):
+#   Cloudflare Zero Trust -> Networks -> Tunnels -> Create a tunnel -> cloudflared
+#   copy the token into TUNNEL_TOKEN in .env
+#   add a Public Hostname: threenicethings.app -> HTTP -> web:3000
+#
+# Manual update cycle:
+#   git pull && docker compose build
+#   docker compose --profile tools run --rm migrate
+#   docker compose up -d --remove-orphans
+
+name: three-nice-things
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  web:
+    build:
+      context: .
+      target: web
+    image: three-nice-things-web
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/app.db
+    volumes:
+      - app-data:/app/data
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(() => process.exit(0), () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  bot:
+    build:
+      context: .
+      target: bot
+    image: three-nice-things-bot
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/app.db
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Outbound-only connection; no inbound ports needed on the droplet.
+  # Only TUNNEL_TOKEN is passed in — no other secrets reach the cloudflared container.
+  tunnel:
+    image: cloudflared/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  # One-shot, only run explicitly: docker compose --profile tools run --rm migrate
+  migrate:
+    build:
+      context: .
+      target: migrate
+    image: three-nice-things-migrate
+    profiles: ["tools"]
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/app.db
+    volumes:
+      - app-data:/app/data
+    logging: *default-logging
+
+volumes:
+  app-data:
