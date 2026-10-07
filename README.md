@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 3 Nice Things
 
-## Getting Started
+A personal habit tracker with an AI accountability layer. Every day you log three nice things you did for yourself — small stuff counts. Miss the 7 PM cutoff and a Discord bot DMs you a personalized (AI-generated, not templated) reminder, using your last 7 days as context. You can also just reply to the bot and it'll chat back.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Next.js 16** (App Router) + **React 19** + **Tailwind v4** + **shadcn/ui**
+- **Drizzle ORM** on **SQLite** (better-sqlite3, WAL mode) — designed to migrate to Postgres later by swapping the driver and dialect
+- **better-auth** with Discord OAuth
+- **Vercel AI SDK** (`ai`) via **OpenRouter**
+- **discord.js** bot process (shares the DB and AI code with the web app), **node-cron** for the 7 PM sweep
+- **next-openapi-gen** → `public/openapi.json` → **hey-api** client → **TanStack Query**
+
+## Layout
+
+```
+app/                 Next.js app router (pages + API routes)
+  api/entries        GET/POST entries (+ [id] DELETE, /month history)
+  api/me             current user + today's progress
+bot/                 Discord bot process (tsx)
+api-client/          generated hey-api client (do not edit)
+components/          UI (app components + shadcn ui/)
+lib/db/              drizzle client + schema
+lib/ai.ts            AI prompts + shared DB queries (web + bot)
+lib/schemas.ts       zod schemas (validation + OpenAPI source)
+drizzle/             SQL migrations (committed)
+public/openapi.json  generated OpenAPI spec (also served at /openapi.json)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+cp .env.example .env   # fill in the values
+npm run db:migrate
+npm run dev            # web app on :3000
+npm run dev:bot        # bot in another terminal
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Discord application (https://discord.com/developers/applications)
 
-## Learn More
+1. **OAuth2 tab**: add redirect `{APP_URL}/api/auth/callback/discord`; copy Client ID + Secret
+2. **Bot tab**: Reset Token -> `DISCORD_BOT_TOKEN`; enable **Message Content Intent** (needed to read DM replies)
+3. Use the OAuth2 URL generator with `bot` + `identify` scopes to invite the bot (no server needed for DMs, but inviting is the easy path)
 
-To learn more about Next.js, take a look at the following resources:
+The bot DMs anyone who logged into the web app with Discord — the OAuth account link is what connects the two.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### AI
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+OpenRouter key from https://openrouter.ai/keys. Pick any model via `OPENROUTER_MODEL`.
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Script | Purpose |
+|---|---|
+| `npm run dev` / `dev:bot` | web app / bot with watch |
+| `npm run build` + `start` + `bot` | production processes |
+| `npm run db:generate` | generate SQL migration from schema changes |
+| `npm run db:migrate` | apply migrations |
+| `npm run client:generate` | regenerate OpenAPI spec + typed client after API changes |
+| `npm run lint` / `npx tsc --noEmit` | lint / typecheck |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## How the pipeline fits together
+
+1. Route handlers use zod schemas from `lib/schemas.ts` for validation and carry `@body`/`@path`/`@response` JSDoc tags
+2. `next-openapi-gen` scans handlers and emits `public/openapi.json`
+3. `openapi-ts` (hey-api) generates `api-client/` with typed SDK functions + TanStack Query options/mutations
+4. Components consume generated `getEntriesOptions()` / `postEntriesMutation()` etc. — API changes flow to the frontend in one regen
+
+## Deployment (same box)
+
+The web app and bot must run as two processes sharing the SQLite file (WAL mode makes this safe):
+
+```bash
+npm run build
+pm2 start "npm run start" --name tnt-web
+pm2 start "npm run bot" --name tnt-bot
+```
+
+or two systemd units running `npm run start` and `npm run bot` from the repo directory. Point `APP_URL`/`BETTER_AUTH_URL` at the public URL and put the app behind a reverse proxy (caddy/nginx) for TLS — Discord OAuth requires HTTPS in production.
+
+Notes:
+- `REMINDER_TZ` pins the timezone for both the 7 PM cron and the date rollover; leave unset to use server time
+- If the box is down at 7 PM, the sweep is skipped for that day (cron doesn't catch up)
+- Deleting entries is allowed for today only; history is immutable
+- To start fresh: stop both processes, delete `data/`, run `npm run db:migrate`
