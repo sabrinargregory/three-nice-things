@@ -1,14 +1,14 @@
 # First run on the VPS:  cp .env.example .env   (fill in values, incl. TUNNEL_TOKEN)
 #
+# Images are built by GitHub Actions on every push to main and published to
+# ghcr.io (public packages). Deploy updates with:  ./deploy.sh
+#
 # Cloudflare Tunnel one-time setup (dashboard-managed tunnel):
 #   Cloudflare Zero Trust -> Networks -> Tunnels -> Create a tunnel -> cloudflared
 #   copy the token into TUNNEL_TOKEN in .env
 #   add a Public Hostname: threenicethings.app -> HTTP -> web:3000
 #
-# Manual update cycle:
-#   git pull && docker compose build
-#   docker compose --profile tools run --rm migrate
-#   docker compose up -d --remove-orphans
+# Rollback: pin a service's image to its sha-<short> tag, then up -d.
 
 name: three-nice-things
 
@@ -20,10 +20,7 @@ x-logging: &default-logging
 
 services:
   web:
-    build:
-      context: .
-      target: web
-    image: three-nice-things-web
+    image: ghcr.io/sabrinargregory/three-nice-things-web:latest
     env_file: .env
     environment:
       DATABASE_PATH: /app/data/app.db
@@ -41,10 +38,7 @@ services:
     logging: *default-logging
 
   bot:
-    build:
-      context: .
-      target: bot
-    image: three-nice-things-bot
+    image: ghcr.io/sabrinargregory/three-nice-things-bot:latest
     env_file: .env
     environment:
       DATABASE_PATH: /app/data/app.db
@@ -68,10 +62,7 @@ services:
 
   # One-shot, only run explicitly: docker compose --profile tools run --rm migrate
   migrate:
-    build:
-      context: .
-      target: migrate
-    image: three-nice-things-migrate
+    image: ghcr.io/sabrinargregory/three-nice-things-migrate:latest
     profiles: ["tools"]
     env_file: .env
     environment:
