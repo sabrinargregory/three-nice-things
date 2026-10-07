@@ -33,17 +33,18 @@ public/openapi.json  generated OpenAPI spec (also served at /openapi.json)
 npm install
 cp .env.example .env   # fill in the values
 npm run db:migrate
-npm run dev            # web app on :3000
-npm run dev:bot        # bot in another terminal
+npm run dev            # web app on :3000 + bot, in one terminal
+npm run dev:web        # web app only
+npm run dev:bot        # bot only
 ```
 
 ### Discord application (https://discord.com/developers/applications)
 
 1. **OAuth2 tab**: add redirect `{APP_URL}/api/auth/callback/discord`; copy Client ID + Secret
 2. **Bot tab**: Reset Token -> `DISCORD_BOT_TOKEN`; enable **Message Content Intent** (needed to read DM replies)
-3. Use the OAuth2 URL generator with `bot` + `identify` scopes to invite the bot (no server needed for DMs, but inviting is the easy path)
+3. Use the OAuth2 URL generator with the `bot` scope (permissions can stay at 0) to invite the bot to your server — a bot can only DM users it shares a server with
 
-The bot DMs anyone who logged into the web app with Discord — the OAuth account link is what connects the two.
+The `identify` + `email` scopes from step 1 are requested automatically by the login flow; the bot invite itself needs nothing else. The bot DMs anyone who logged into the web app with Discord — the OAuth account link is what connects the two.
 
 ### AI
 
@@ -53,7 +54,8 @@ OpenRouter key from https://openrouter.ai/keys. Pick any model via `OPENROUTER_M
 
 | Script | Purpose |
 |---|---|
-| `npm run dev` / `dev:bot` | web app / bot with watch |
+| `npm run dev` | web app + bot together via concurrently |
+| `npm run dev:web` / `npm run dev:bot` | web app / bot alone (with watch) |
 | `npm run build` + `start` + `bot` | production processes |
 | `npm run db:generate` | generate SQL migration from schema changes |
 | `npm run db:migrate` | apply migrations |

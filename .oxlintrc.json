@@ -17,6 +17,7 @@
   "plugins": ["typescript", "react", "nextjs", "unicorn", "import", "promise", "node", "vitest"],
   "rules": {
     "react/react-in-jsx-scope": "off",
-    "vitest/require-mock-type-parameters": "off"
+    "vitest/require-mock-type-parameters": "off",
+    "typescript/no-non-null-assertion": "error"
   }
 }

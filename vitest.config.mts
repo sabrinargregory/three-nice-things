@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     coverage: {
       provider: "v8",
-      include: ["app/**", "bot/**", "components/**", "lib/**", "middleware.ts"],
+      include: ["app/**", "bot/**", "components/**", "lib/**", "proxy.ts"],
       exclude: [
         "**/*.test.*",
         "**/*.d.ts",
@@ -38,7 +38,7 @@ export default defineConfig({
             "lib/**/*.test.{ts,tsx}",
             "bot/**/*.test.{ts,tsx}",
             "app/api/**/*.test.{ts,tsx}",
-            "middleware.test.ts",
+            "proxy.test.ts",
           ],
         },
       },

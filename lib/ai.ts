@@ -4,18 +4,21 @@ import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { account, chatMessage, entry, user } from "./db/schema";
 import { daysAgo, today } from "./date";
+import { loadEnv } from "./env";
+
+const { OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_BASE_URL, APP_URL } = loadEnv("ai");
 
 const openai = createOpenAI({
-  baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: OPENROUTER_BASE_URL,
+  apiKey: OPENROUTER_API_KEY,
   headers: {
-    "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
+    "HTTP-Referer": APP_URL,
     "X-Title": "3 Nice Things",
   },
 });
 
 function getModel() {
-  return openai(process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini");
+  return openai(OPENROUTER_MODEL);
 }
 
 // ---- context builders ----

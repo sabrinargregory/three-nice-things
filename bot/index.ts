@@ -12,12 +12,9 @@ import {
   getUserByDiscordId,
 } from "../lib/ai";
 import { today } from "../lib/date";
+import { loadEnv } from "../lib/env";
 
-const token = process.env.DISCORD_BOT_TOKEN;
-if (!token) {
-  console.error("[bot] DISCORD_BOT_TOKEN is required");
-  process.exit(1);
-}
+const { DISCORD_BOT_TOKEN: token } = loadEnv("bot");
 
 const client = new Client({
   intents: [
@@ -98,6 +95,18 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void client.destroy();
   process.exit(0);
+});
+
+// Format crashes readably; the common misconfiguration gets a fix-it hint.
+process.on("uncaughtException", (err) => {
+  if (/disallowed intents/i.test(String(err.message))) {
+    console.error(
+      "[bot] Discord rejected our gateway intents. Enable 'Message Content Intent' in the Discord Developer Portal (your application → Bot → Privileged Gateway Intents), then restart.",
+    );
+  } else {
+    console.error("[bot] crashed:", err);
+  }
+  process.exit(1);
 });
 
 void client.login(token);

@@ -3,8 +3,11 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as schema from "./schema";
+import { loadEnv } from "../env";
 
-const dbPath = resolve(/*turbopackIgnore: true*/ process.env.DATABASE_PATH ?? "./data/app.db");
+const { DATABASE_PATH } = loadEnv("database");
+
+const dbPath = resolve(/*turbopackIgnore: true*/ DATABASE_PATH);
 
 mkdirSync(dirname(dbPath), { recursive: true });
 

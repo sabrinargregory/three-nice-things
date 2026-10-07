@@ -3,12 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll } from "vitest";
+import "./env";
 
 // Deterministic dates for every server test (lib/date reads these at module load).
 process.env.TZ = "UTC";
 process.env.REMINDER_TZ = "UTC";
-process.env.DISCORD_BOT_TOKEN ||= "test-bot-token";
-process.env.BETTER_AUTH_SECRET ||= "test-secret";
 
 // Fresh SQLite file per test file, so files never share state.
 const dataDir = mkdtempSync(path.join(tmpdir(), "tnt-tests-"));
