@@ -50,7 +50,7 @@ services:
   # Outbound-only connection; no inbound ports needed on the droplet.
   # Only TUNNEL_TOKEN is passed in — no other secrets reach the cloudflared container.
   tunnel:
-    image: cloudflared/cloudflared:latest
+    image: cloudflare/cloudflared:2026.10.0
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
