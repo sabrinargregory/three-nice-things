@@ -22,6 +22,33 @@ function getModel() {
   return openai(OPENROUTER_MODEL);
 }
 
+/**
+ * Calls the model, retrying once when the response carries no text. Reasoning
+ * models can spend the entire output budget thinking and answer with an empty
+ * message, which Discord then rejects (50006) — so guard here and log the
+ * telltales (finishReason + reasoning length + usage) for diagnosis.
+ */
+async function generateTextWithRetry(args: Parameters<typeof generateText>[0]): Promise<string> {
+  const attempt = async (): Promise<string | null> => {
+    const result = await generateText(args);
+    const text = result.text.trim();
+    if (text) return text;
+    console.error(
+      "[ai] empty model response:",
+      JSON.stringify({
+        finishReason: result.finishReason,
+        reasoningLength: result.finalStep.reasoningText?.length ?? 0,
+        usage: result.usage,
+      }),
+    );
+    return null;
+  };
+
+  const text = (await attempt()) ?? (await attempt());
+  if (text === null) throw new Error("model returned an empty response twice");
+  return text;
+}
+
 // ---- context builders ----
 
 export type ActivityDay = { date: string; items: string[] };
@@ -103,7 +130,7 @@ Rules:
 export async function generateReminder(userName: string, activity: ActivityDay[]): Promise<string> {
   const todaysCount = activity[activity.length - 1]?.items.length ?? 0;
 
-  const { text } = await generateText({
+  return generateTextWithRetry({
     model: getModel(),
     system: REMINDER_SYSTEM,
     prompt: `User: ${userName}
@@ -111,10 +138,9 @@ Today is ${today()}. They have logged ${todaysCount} of 3 nice things today.
 
 Their last 7 days of entries:
 ${formatActivity(activity)}`,
-    maxOutputTokens: 250,
+    // Room for reasoning tokens, which OpenRouter counts against this budget.
+    maxOutputTokens: 600,
   });
-
-  return text.trim();
 }
 
 // ---- two-way chat ----
@@ -145,18 +171,19 @@ Today is ${today()}.
 Their last 7 days of entries:
 ${formatActivity(activity)}`;
 
-  const { text } = await generateText({
+  const reply = await generateTextWithRetry({
     model: getModel(),
     system: `${CHAT_SYSTEM}\n\n${context}`,
     messages: [
       ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user", content: userMessage },
     ],
-    maxOutputTokens: 350,
+    // Room for reasoning tokens, which OpenRouter counts against this budget.
+    maxOutputTokens: 1000,
   });
 
-  const reply = text.trim();
-
+  // Persisted only once a non-empty reply exists, so a failed turn can't leave
+  // an empty assistant message behind to pollute the next prompt's history.
   await db.insert(chatMessage).values([
     { userId, sessionId: session.id, role: "user", content: userMessage },
     { userId, sessionId: session.id, role: "assistant", content: reply },

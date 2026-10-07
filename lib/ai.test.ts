@@ -31,8 +31,19 @@ function textResult(text: string) {
   return { text } as unknown as Awaited<ReturnType<typeof generateText>>;
 }
 
+/** What reasoning models return when thinking eats the whole output budget. */
+function emptyResult() {
+  return {
+    text: "",
+    finishReason: "length",
+    usage: { inputTokens: 120, outputTokens: 350, totalTokens: 470 },
+    finalStep: { reasoningText: "thinking very hard..." },
+  } as unknown as Awaited<ReturnType<typeof generateText>>;
+}
+
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.spyOn(console, "error").mockImplementation(() => {});
   await resetDb();
 });
 
@@ -148,6 +159,15 @@ describe("generateReminder", () => {
 
     expect(generateTextMock.mock.calls[0][0].prompt).toContain("logged 2 of 3 nice things today");
   });
+
+  it("retries once on empty text and throws when it stays empty", async () => {
+    generateTextMock.mockResolvedValue(emptyResult());
+    const activity: ActivityDay[] = [{ date: daysAgo(0), items: [] }];
+
+    await expect(generateReminder("Ada", activity)).rejects.toThrow(/empty response/);
+
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("generateChatReply", () => {
@@ -188,6 +208,37 @@ describe("generateChatReply", () => {
     const [session] = await db.select().from(chatSession).where(eq(chatSession.userId, u.id));
     expect(session).toBeDefined();
     expect(rows.every((r) => r.sessionId === session.id)).toBe(true);
+  });
+
+  it("retries on empty text and persists only the good turn", async () => {
+    generateTextMock
+      .mockResolvedValueOnce(emptyResult())
+      .mockResolvedValueOnce(textResult("second try works"));
+    const u = await seedUser();
+
+    const reply = await generateChatReply(u.name, "hello", u.id);
+
+    expect(reply).toBe("second try works");
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+    const rows = await db.select().from(chatMessage).where(eq(chatMessage.userId, u.id));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => ({ role: r.role, content: r.content }))).toEqual(
+      expect.arrayContaining([
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "second try works" },
+      ]),
+    );
+  });
+
+  it("persists nothing when the model returns empty text twice", async () => {
+    generateTextMock.mockResolvedValue(emptyResult());
+    const u = await seedUser();
+
+    await expect(generateChatReply(u.name, "hello", u.id)).rejects.toThrow(/empty response/);
+
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+    const rows = await db.select().from(chatMessage).where(eq(chatMessage.userId, u.id));
+    expect(rows).toHaveLength(0);
   });
 });
 

@@ -270,14 +270,31 @@ describe("DM message handler", () => {
     expect(message.channel.send).not.toHaveBeenCalled();
   });
 
-  it("does not crash when replying fails", async () => {
+  it("sends a fallback DM when replying fails", async () => {
     const u = await seedUser();
     aiState.getUserByDiscordId.mockResolvedValue({ id: u.id, name: "Ada" });
     aiState.generateChatReply.mockRejectedValue(new Error("model down"));
     const message = fakeMessage();
 
     await handleMessage(message);
-    expect(message.channel.send).not.toHaveBeenCalled();
+
+    expect(message.channel.send).toHaveBeenCalledWith(
+      "Something went wrong on my end — try sending that again?",
+    );
+  });
+
+  it("still does not crash when the fallback send fails too", async () => {
+    const u = await seedUser();
+    aiState.getUserByDiscordId.mockResolvedValue({ id: u.id, name: "Ada" });
+    aiState.generateChatReply.mockRejectedValue(new Error("model down"));
+    const message = fakeMessage();
+    message.channel.send.mockRejectedValue(new Error("dms blocked"));
+
+    await handleMessage(message);
+
+    expect(message.channel.send).toHaveBeenCalledWith(
+      "Something went wrong on my end — try sending that again?",
+    );
   });
 
   it("handles a user's DMs one at a time, never concurrently", async () => {

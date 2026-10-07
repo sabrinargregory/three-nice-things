@@ -141,6 +141,12 @@ client.on(Events.MessageCreate, (message) => {
       await message.channel.send(reply);
     } catch (err) {
       console.error("[bot] failed to handle DM:", err);
+      // Never leave the user hanging in silence; log it if even this fails.
+      try {
+        await message.channel.send("Something went wrong on my end — try sending that again?");
+      } catch (fallbackErr) {
+        console.error("[bot] failed to send the DM fallback:", fallbackErr);
+      }
     }
   });
 });
