@@ -1,8 +1,9 @@
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { account, chatMessage, entry, user } from "./db/schema";
+import { getOrCreateSession, getSessionHistory } from "./chat-session";
 import { daysAgo, today } from "./date";
 import { loadEnv } from "./env";
 
@@ -46,16 +47,6 @@ export async function getRecentActivity(userId: string, days = 7): Promise<Activ
   return dates.map((date) => ({ date, items: byDate.get(date) ?? [] }));
 }
 
-export async function getChatHistory(userId: string, limit = 10) {
-  const rows = await db
-    .select({ role: chatMessage.role, content: chatMessage.content })
-    .from(chatMessage)
-    .where(eq(chatMessage.userId, userId))
-    .orderBy(desc(chatMessage.createdAt))
-    .limit(limit);
-  return rows.reverse();
-}
-
 export async function getDiscordId(userId: string): Promise<string | null> {
   const [row] = await db
     .select({ accountId: account.accountId })
@@ -81,7 +72,8 @@ export async function getUserByDiscordId(discordId: string) {
   return row ?? null;
 }
 
-function formatActivity(activity: ActivityDay[]): string {
+/** Compact multi-day rendering of entries, shared by prompts and slash commands. */
+export function formatActivity(activity: ActivityDay[]): string {
   if (activity.every((day) => day.items.length === 0)) {
     return "(no entries logged in the last 7 days)";
   }
@@ -140,9 +132,11 @@ export async function generateChatReply(
   userMessage: string,
   userId: string,
 ): Promise<string> {
+  // Resolves or rolls over the session (touching lastActiveAt) before the model call.
+  const session = await getOrCreateSession(userId);
   const [activity, history] = await Promise.all([
     getRecentActivity(userId),
-    getChatHistory(userId),
+    getSessionHistory(session.id),
   ]);
 
   const context = `User: ${userName}
@@ -164,8 +158,8 @@ ${formatActivity(activity)}`;
   const reply = text.trim();
 
   await db.insert(chatMessage).values([
-    { userId, role: "user", content: userMessage },
-    { userId, role: "assistant", content: reply },
+    { userId, sessionId: session.id, role: "user", content: userMessage },
+    { userId, sessionId: session.id, role: "assistant", content: reply },
   ]);
 
   return reply;

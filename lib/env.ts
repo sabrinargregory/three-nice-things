@@ -22,6 +22,23 @@ function optionalUrl(fallback: string) {
   return z.url({ error: "must be a valid URL" }).default(fallback);
 }
 
+/** Optional integer; falls back to `fallback` when unset. */
+function optionalInt(fallback: number, min: number) {
+  return z.coerce
+    .number({ error: "must be an integer" })
+    .int()
+    .min(min, { message: `must be >= ${min}` })
+    .default(fallback);
+}
+
+/** Optional string; blank ("") counts as unset so it can sit empty in .env. */
+function optionalId() {
+  return z
+    .string()
+    .transform((v) => v.trim() || undefined)
+    .optional();
+}
+
 const databaseShape = {
   /** SQLite file shared by the web app and the bot. */
   DATABASE_PATH: optionalStr("./data/app.db"),
@@ -33,6 +50,10 @@ const aiShape = {
   OPENROUTER_BASE_URL: optionalUrl("https://openrouter.ai/api/v1"),
   /** Public origin of the web app, sent as HTTP-Referer to OpenRouter. */
   APP_URL: optionalUrl("http://localhost:3000"),
+  /** Minutes of DM inactivity before a fresh AI chat session starts. */
+  CHAT_SESSION_TTL_MINUTES: optionalInt(60, 1),
+  /** Cap on how many previous messages of the active session are sent to the model. */
+  CHAT_HISTORY_MAX_MESSAGES: optionalInt(20, 2),
 };
 
 const webShape = {
@@ -50,6 +71,8 @@ const botShape = {
   ...databaseShape,
   ...aiShape,
   DISCORD_BOT_TOKEN: required("Discord application → Bot → Reset Token"),
+  /** Optional dev-server guild id: slash commands register there instantly. */
+  DISCORD_GUILD_ID: optionalId(),
 };
 
 /** Formats a zod failure into a readable env checklist error message. */

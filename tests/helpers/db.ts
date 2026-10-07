@@ -1,6 +1,13 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { account, chatMessage, entry, reminderLog, user } from "@/lib/db/schema";
+import {
+  account,
+  chatMessage,
+  chatSession,
+  entry,
+  reminderLog,
+  user,
+} from "@/lib/db/schema";
 
 let seq = 0;
 
@@ -59,14 +66,31 @@ export async function seedChatMessage(
   role: "user" | "assistant",
   content: string,
   createdAt = new Date(),
+  sessionId: number | null = null,
 ) {
-  const [row] = await db.insert(chatMessage).values({ userId, role, content, createdAt }).returning();
+  const [row] = await db
+    .insert(chatMessage)
+    .values({ userId, role, content, createdAt, sessionId })
+    .returning();
+  return row;
+}
+
+export async function seedChatSession(
+  userId: string,
+  startedAt = new Date(),
+  lastActiveAt = new Date(),
+) {
+  const [row] = await db
+    .insert(chatSession)
+    .values({ userId, startedAt, lastActiveAt })
+    .returning();
   return row;
 }
 
 /** Wipe all rows (children first for FKs) between tests. */
 export async function resetDb() {
   await db.run(sql`DELETE FROM chat_message`);
+  await db.run(sql`DELETE FROM chat_session`);
   await db.run(sql`DELETE FROM reminder_log`);
   await db.run(sql`DELETE FROM entry`);
   await db.run(sql`DELETE FROM account`);

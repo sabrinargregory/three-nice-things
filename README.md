@@ -17,7 +17,7 @@ A personal habit tracker with an AI accountability layer. Every day you log thre
 app/                 Next.js app router (pages + API routes)
   api/entries        GET/POST entries (+ [id] DELETE, /month history)
   api/me             current user + today's progress
-bot/                 Discord bot process (tsx)
+bot/                 Discord bot process (tsx): reminder sweep, DM chat, slash commands
 api-client/          generated hey-api client (do not edit)
 components/          UI (app components + shadcn ui/)
 lib/db/              drizzle client + schema
@@ -42,9 +42,28 @@ npm run dev:bot        # bot only
 
 1. **OAuth2 tab**: add redirect `{APP_URL}/api/auth/callback/discord`; copy Client ID + Secret
 2. **Bot tab**: Reset Token -> `DISCORD_BOT_TOKEN`; enable **Message Content Intent** (needed to read DM replies)
-3. Use the OAuth2 URL generator with the `bot` scope (permissions can stay at 0) to invite the bot to your server — a bot can only DM users it shares a server with
+3. Use the OAuth2 URL generator with **`bot` + `applications.commands`** scopes (permissions can stay at 0) to invite the bot — a bot can only DM users it shares a server with. If the bot was invited with only `bot`, revisiting the URL with both scopes checked adds the missing one without kicking it; slash commands won't appear until then
+4. Optional, dev only: put your test server's id in `DISCORD_GUILD_ID` so slash commands register instantly on startup; otherwise they register globally (first-time propagation can take up to an hour)
 
 The `identify` + `email` scopes from step 1 are requested automatically by the login flow; the bot invite itself needs nothing else. The bot DMs anyone who logged into the web app with Discord — the OAuth account link is what connects the two.
+
+### Slash commands
+
+All replies are ephemeral (only you see them), in DMs and in the server:
+
+| Command | Purpose |
+|---|---|
+| `/whoami` | What the bot can see and do with your account |
+| `/today` | Today's entries + X/3 progress |
+| `/history` | Last 7 days of entries |
+| `/reminder` | Whether today's reminder went out and when they fire |
+| `/session` | Current AI chat session (started, message count, expiry policy) |
+| `/reset` | Wipe the current chat session and start fresh |
+| `/test-reminder` | Preview a reminder DM now (doesn't count as today's real one) |
+
+### AI chat sessions
+
+DM conversations are scoped to a session: one hour of inactivity (`CHAT_SESSION_TTL_MINUTES`) starts a fresh session, and the expired session's messages are purged, so the model only ever sees your last 7 days of entries plus the last `CHAT_HISTORY_MAX_MESSAGES` messages of the active session. `/reset` wipes it early.
 
 ### AI
 

@@ -90,7 +90,26 @@ export const reminderLog = sqliteTable(
   (t) => [uniqueIndex("reminder_log_user_date_idx").on(t.userId, t.entryDate)],
 );
 
-// History of the bot's two-way DM conversations.
+// One conversation with the AI per user. A session stays alive while the user
+// keeps DMing; after an hour of inactivity the next message starts a new one.
+export const chatSession = sqliteTable(
+  "chat_session",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    startedAt: integer("started_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    lastActiveAt: integer("last_active_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("chat_session_user_idx").on(t.userId, t.lastActiveAt)],
+);
+
+// History of the bot's two-way DM conversations, scoped to a chat session.
 export const chatMessage = sqliteTable(
   "chat_message",
   {
@@ -98,11 +117,18 @@ export const chatMessage = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // Null for rows written before sessions existed; those are never read back.
+    sessionId: integer("session_id").references(() => chatSession.id, {
+      onDelete: "cascade",
+    }),
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [index("chat_message_user_idx").on(t.userId, t.createdAt)],
+  (t) => [
+    index("chat_message_user_idx").on(t.userId, t.createdAt),
+    index("chat_message_session_idx").on(t.sessionId),
+  ],
 );

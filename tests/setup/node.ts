@@ -33,15 +33,26 @@ sqlite.exec(`
     "updated_at" integer NOT NULL,
     FOREIGN KEY ("user_id") REFERENCES "user"("id") ON UPDATE no action ON DELETE cascade
   );
+  CREATE TABLE IF NOT EXISTS "chat_session" (
+    "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    "user_id" text NOT NULL,
+    "started_at" integer NOT NULL,
+    "last_active_at" integer NOT NULL,
+    FOREIGN KEY ("user_id") REFERENCES "user"("id") ON UPDATE no action ON DELETE cascade
+  );
+  CREATE INDEX IF NOT EXISTS "chat_session_user_idx" ON "chat_session" ("user_id","last_active_at");
   CREATE TABLE IF NOT EXISTS "chat_message" (
     "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     "user_id" text NOT NULL,
+    "session_id" integer,
     "role" text NOT NULL,
     "content" text NOT NULL,
     "created_at" integer NOT NULL,
-    FOREIGN KEY ("user_id") REFERENCES "user"("id") ON UPDATE no action ON DELETE cascade
+    FOREIGN KEY ("user_id") REFERENCES "user"("id") ON UPDATE no action ON DELETE cascade,
+    FOREIGN KEY ("session_id") REFERENCES "chat_session"("id") ON UPDATE no action ON DELETE cascade
   );
   CREATE INDEX IF NOT EXISTS "chat_message_user_idx" ON "chat_message" ("user_id","created_at");
+  CREATE INDEX IF NOT EXISTS "chat_message_session_idx" ON "chat_message" ("session_id");
   CREATE TABLE IF NOT EXISTS "entry" (
     "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     "user_id" text NOT NULL,

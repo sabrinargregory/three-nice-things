@@ -1,8 +1,9 @@
-import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { Client, Events, GatewayIntentBits, MessageFlags, Partials, REST, Routes } from "discord.js";
 import cron from "node-cron";
 import { eq } from "drizzle-orm";
 import { db } from "../lib/db";
 import { reminderLog } from "../lib/db/schema";
+import { commands } from "./commands";
 import {
   generateChatReply,
   generateReminder,
@@ -14,7 +15,7 @@ import {
 import { today } from "../lib/date";
 import { loadEnv } from "../lib/env";
 
-const { DISCORD_BOT_TOKEN: token } = loadEnv("bot");
+const { DISCORD_BOT_TOKEN: token, DISCORD_GUILD_ID: guildId } = loadEnv("bot");
 
 const client = new Client({
   intents: [
@@ -62,29 +63,86 @@ async function reminderSweep() {
   console.log("[bot] sweep complete");
 }
 
-client.once(Events.ClientReady, (c) => {
+/** Registers slash commands: instantly in the dev guild (if set) and globally. */
+async function registerSlashCommands(applicationId: string) {
+  const rest = new REST().setToken(token);
+  const body = commands.map((command) => command.data.toJSON());
+  if (guildId) {
+    await rest.put(Routes.applicationGuildCommands(applicationId, guildId), { body });
+    console.log(`[bot] registered ${body.length} slash commands in guild ${guildId}`);
+  }
+  await rest.put(Routes.applicationCommands(applicationId), { body });
+  console.log(`[bot] registered ${body.length} global slash commands`);
+}
+
+client.once(Events.ClientReady, async (c) => {
   console.log(`[bot] logged in as ${c.user.tag}`);
+
+  try {
+    await registerSlashCommands(c.user.id);
+  } catch (err) {
+    console.error("[bot] slash command registration failed:", err);
+  }
 
   const timezone = process.env.REMINDER_TZ || undefined;
   cron.schedule("0 19 * * *", () => void reminderSweep(), { timezone });
   console.log(`[bot] reminder cron scheduled at 19:00 ${timezone ?? "(server time)"}`);
 });
 
-client.on(Events.MessageCreate, async (message) => {
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  const command = commands.find((c) => c.data.name === interaction.commandName);
+  if (!command) return;
   try {
-    // DMs only, and never respond to other bots or ourselves
-    if (message.guildId !== null || message.author.bot) return;
-    const content = message.content.trim();
-    if (!content) return;
-
-    const appUser = await getUserByDiscordId(message.author.id);
-    if (!appUser) return; // signed up via web without Discord link (not possible today, but safe)
-
-    const reply = await generateChatReply(appUser.name, content, appUser.id);
-    await message.channel.send(reply);
+    await command.execute(interaction, client);
   } catch (err) {
-    console.error("[bot] failed to handle DM:", err);
+    console.error(`[bot] /${interaction.commandName} failed:`, err);
+    const content = "Something went wrong on my end — try again in a bit.";
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content });
+      } else {
+        await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+      }
+    } catch {
+      // Interaction expired; nothing left to salvage.
+    }
   }
+});
+
+// Messages are handled one-at-a-time per user so concurrent DMs can't race on
+// chat session creation (the DB would happily create two sessions otherwise).
+const userQueues = new Map<string, Promise<unknown>>();
+
+function serializeForUser(discordId: string, task: () => Promise<void>): Promise<void> {
+  const previous = userQueues.get(discordId) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  // The queue stores a never-rejecting twin so one failure can't break the chain.
+  const stored = next.catch(() => {});
+  userQueues.set(discordId, stored);
+  void stored.finally(() => {
+    if (userQueues.get(discordId) === stored) userQueues.delete(discordId);
+  });
+  return next;
+}
+
+client.on(Events.MessageCreate, (message) => {
+  // DMs only, and never respond to other bots or ourselves
+  if (message.guildId !== null || message.author.bot) return;
+  const content = message.content.trim();
+  if (!content) return;
+
+  void serializeForUser(message.author.id, async () => {
+    try {
+      const appUser = await getUserByDiscordId(message.author.id);
+      if (!appUser) return; // signed up via web without Discord link (not possible today, but safe)
+
+      const reply = await generateChatReply(appUser.name, content, appUser.id);
+      await message.channel.send(reply);
+    } catch (err) {
+      console.error("[bot] failed to handle DM:", err);
+    }
+  });
 });
 
 process.on("SIGINT", () => {

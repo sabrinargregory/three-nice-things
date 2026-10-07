@@ -15,14 +15,16 @@ const aiState = vi.hoisted(() => ({
   getUserByDiscordId: vi.fn(),
   generateReminder: vi.fn(),
   generateChatReply: vi.fn(),
+  formatActivity: vi.fn(),
 }));
 
 vi.mock("@/lib/ai", () => aiState);
 vi.mock("@/lib/date", () => ({ today: () => FIXED_DATE }));
 
-const discordState = vi.hoisted(() => ({ instances: [] as unknown[] }));
+const discordState = vi.hoisted(() => ({ instances: [] as unknown[], restInstances: [] as unknown[] }));
 
-vi.mock("discord.js", () => {
+vi.mock("discord.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("discord.js")>();
   class FakeClient {
     static instances: unknown[] = discordState.instances;
     handlers = new Map<string, (arg: unknown) => unknown>();
@@ -44,11 +46,30 @@ vi.mock("discord.js", () => {
       FakeClient.instances.push(this);
     }
   }
+  class FakeREST {
+    static instances: FakeREST[] = discordState.restInstances as FakeREST[];
+    puts: { route: unknown; body: unknown }[] = [];
+    setToken() {
+      return this;
+    }
+    async put(route: unknown, { body }: { body: unknown }) {
+      this.puts.push({ route, body });
+      return {};
+    }
+    constructor() {
+      FakeREST.instances.push(this);
+    }
+  }
   return {
+    ...actual,
     Client: FakeClient,
-    Events: { ClientReady: "ClientReady", MessageCreate: "MessageCreate" },
-    GatewayIntentBits: { Guilds: 1, DirectMessages: 2, MessageContent: 4 },
-    Partials: { Channel: "Channel" },
+    REST: FakeREST,
+    Events: {
+      ...actual.Events,
+      ClientReady: "ClientReady",
+      MessageCreate: "MessageCreate",
+      InteractionCreate: "InteractionCreate",
+    },
   };
 });
 
@@ -84,11 +105,30 @@ function fakeMessage(overrides: Record<string, unknown> = {}) {
 beforeEach(async () => {
   vi.clearAllMocks();
   await resetDb();
+  discordState.restInstances.length = 0;
+});
+
+// The ClientReady handler is async (registers slash commands before the cron).
+function fireReady(): Promise<unknown> {
+  return botClient().handlers.get("ClientReady")?.(botClient()) as Promise<unknown>;
+}
+
+describe("slash command registration", () => {
+  it("registers all commands globally on ready", async () => {
+    await fireReady();
+
+    await vi.waitFor(() => {
+      expect(discordState.restInstances.length).toBeGreaterThan(0);
+    });
+    const rest = discordState.restInstances.at(-1) as { puts: { route: unknown; body: unknown[] }[] };
+    expect(rest.puts).toHaveLength(1); // no DISCORD_GUILD_ID in test env -> global only
+    expect(rest.puts[0].body).toHaveLength(7);
+  });
 });
 
 describe("reminder sweep", () => {
   async function runSweep(awaitable: () => boolean) {
-    botClient().handlers.get("ClientReady")?.(botClient());
+    await fireReady();
     const sweep = vi.mocked(cron.schedule).mock.calls.at(-1)?.[1] as () => void;
     sweep();
     // The sweep runs as a floating promise; wait for the awaited effect.
@@ -182,8 +222,8 @@ describe("reminder sweep", () => {
     expect(logged.map((r) => r.userId)).toEqual([healthy.id]);
   });
 
-  it("schedules the cron at 19:00 in the configured timezone", () => {
-    botClient().handlers.get("ClientReady")?.(botClient());
+  it("schedules the cron at 19:00 in the configured timezone", async () => {
+    await fireReady();
     expect(cron.schedule).toHaveBeenCalledWith("0 19 * * *", expect.any(Function), { timezone: "UTC" });
   });
 });
@@ -238,5 +278,102 @@ describe("DM message handler", () => {
 
     await handleMessage(message);
     expect(message.channel.send).not.toHaveBeenCalled();
+  });
+
+  it("handles a user's DMs one at a time, never concurrently", async () => {
+    const u = await seedUser();
+    aiState.getUserByDiscordId.mockResolvedValue({ id: u.id, name: "Ada" });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    aiState.generateChatReply.mockImplementation(() => gate.then(() => "first reply"));
+
+    const m1 = fakeMessage({ content: "first" });
+    const m2 = fakeMessage({ content: "second" });
+    botClient().handlers.get("MessageCreate")?.(m1);
+    botClient().handlers.get("MessageCreate")?.(m2);
+
+    // The first message still holds the queue, so the second hasn't started.
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(aiState.generateChatReply).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.waitFor(() => expect(aiState.generateChatReply).toHaveBeenCalledTimes(2));
+    expect(m1.channel.send).toHaveBeenCalledWith("first reply");
+    expect(m2.channel.send).toHaveBeenCalledWith("first reply");
+  });
+});
+
+describe("interaction handler", () => {
+  function fakeInteraction(overrides: Record<string, unknown> = {}) {
+    return {
+      isChatInputCommand: () => true,
+      commandName: "whoami",
+      user: { id: "discord-user-1" },
+      reply: vi.fn(async () => ({})),
+      deferReply: vi.fn(async () => ({})),
+      editReply: vi.fn(async () => ({})),
+      deferred: false,
+      replied: false,
+      ...overrides,
+    };
+  }
+
+  async function handleInteraction(interaction: Record<string, unknown>) {
+    botClient().handlers.get("InteractionCreate")?.(interaction);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+
+  it("dispatches to the matching command", async () => {
+    const u = await seedUser({ name: "Ada" });
+    aiState.getUserByDiscordId.mockResolvedValue({ id: u.id, name: "Ada" });
+    const interaction = fakeInteraction();
+
+    await handleInteraction(interaction);
+
+    expect(aiState.getUserByDiscordId).toHaveBeenCalledWith("discord-user-1");
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: expect.stringContaining("**Ada**"),
+      flags: expect.anything(),
+    });
+  });
+
+  it("ignores non-chat-input interactions", async () => {
+    const interaction = fakeInteraction({ isChatInputCommand: () => false });
+    await handleInteraction(interaction);
+    expect(aiState.getUserByDiscordId).not.toHaveBeenCalled();
+    expect(interaction.reply).not.toHaveBeenCalled();
+  });
+
+  it("replies with a fallback error when a command throws", async () => {
+    aiState.getUserByDiscordId.mockRejectedValue(new Error("db exploded"));
+    const interaction = fakeInteraction();
+
+    await handleInteraction(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: expect.stringContaining("Something went wrong"),
+      flags: expect.anything(),
+    });
+  });
+
+  it("edits the deferred reply when a command throws late", async () => {
+    const u = await seedUser();
+    aiState.getUserByDiscordId.mockResolvedValue({ id: u.id, name: "Ada" });
+    aiState.generateReminder.mockRejectedValue(new Error("model down"));
+    const interaction = fakeInteraction({ commandName: "test-reminder", deferred: true });
+
+    await handleInteraction(interaction);
+
+    expect(interaction.deferReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: expect.stringContaining("Something went wrong"),
+    });
+    expect(interaction.reply).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for unknown command names", async () => {
+    const interaction = fakeInteraction({ commandName: "nope" });
+    await handleInteraction(interaction);
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 });

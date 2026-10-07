@@ -2,14 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { generateText } from "ai";
 import { db } from "./db";
-import { chatMessage } from "./db/schema";
+import { chatMessage, chatSession } from "./db/schema";
 import { daysAgo } from "./date";
-import { resetDb, seedChatMessage, seedDiscordAccount, seedEntry, seedUser } from "@/tests/helpers/db";
+import {
+  resetDb,
+  seedChatMessage,
+  seedChatSession,
+  seedDiscordAccount,
+  seedEntry,
+  seedUser,
+} from "@/tests/helpers/db";
 import {
   generateChatReply,
   generateReminder,
   getAllUsers,
-  getChatHistory,
   getDiscordId,
   getRecentActivity,
   getUserByDiscordId,
@@ -55,34 +61,6 @@ describe("getRecentActivity", () => {
 
     const activity = await getRecentActivity(u.id);
     expect(activity.every((day) => day.items.length === 0)).toBe(true);
-  });
-});
-
-describe("getChatHistory", () => {
-  it("returns messages oldest-first", async () => {
-    const u = await seedUser();
-    await seedChatMessage(u.id, "user", "first", new Date(1000));
-    await seedChatMessage(u.id, "assistant", "reply", new Date(2000));
-    await seedChatMessage(u.id, "user", "second", new Date(3000));
-
-    const history = await getChatHistory(u.id);
-    expect(history).toEqual([
-      { role: "user", content: "first" },
-      { role: "assistant", content: "reply" },
-      { role: "user", content: "second" },
-    ]);
-  });
-
-  it("limits to the most recent N then flips to chronological order", async () => {
-    const u = await seedUser();
-    for (let i = 0; i < 12; i++) {
-      await seedChatMessage(u.id, i % 2 === 0 ? "user" : "assistant", `msg-${i}`, new Date((i + 1) * 1000));
-    }
-
-    const history = await getChatHistory(u.id, 10);
-    expect(history).toHaveLength(10);
-    expect(history[0].content).toBe("msg-2");
-    expect(history[9].content).toBe("msg-11");
   });
 });
 
@@ -173,11 +151,14 @@ describe("generateReminder", () => {
 });
 
 describe("generateChatReply", () => {
-  it("passes prior chat history plus the new message to the model", async () => {
+  it("passes the session's history plus the new message to the model", async () => {
     generateTextMock.mockResolvedValue(textResult("sounds great!"));
     const u = await seedUser();
-    await seedChatMessage(u.id, "user", "earlier message", new Date(1000));
-    await seedChatMessage(u.id, "assistant", "earlier reply", new Date(2000));
+    const session = await seedChatSession(u.id);
+    await seedChatMessage(u.id, "user", "earlier message", new Date(1000), session.id);
+    await seedChatMessage(u.id, "assistant", "earlier reply", new Date(2000), session.id);
+    // Legacy row without a session must not leak into the prompt.
+    await seedChatMessage(u.id, "user", "pre-session noise", new Date(3000), null);
 
     const reply = await generateChatReply(u.name, "new message", u.id);
 
@@ -191,7 +172,7 @@ describe("generateChatReply", () => {
     expect(args.system).toContain("accountability buddy");
   });
 
-  it("stores both sides of the conversation", async () => {
+  it("stores both sides of the conversation in the active session", async () => {
     generateTextMock.mockResolvedValue(textResult("here you go"));
     const u = await seedUser();
 
@@ -204,6 +185,9 @@ describe("generateChatReply", () => {
         { role: "assistant", content: "here you go" },
       ]),
     );
+    const [session] = await db.select().from(chatSession).where(eq(chatSession.userId, u.id));
+    expect(session).toBeDefined();
+    expect(rows.every((r) => r.sessionId === session.id)).toBe(true);
   });
 });
 
