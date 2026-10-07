@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "api-client/**",
+    ".next/**",
+    "node_modules/**",
+    "drizzle/**",
+    "public/**",
+    "data/**",
+    "coverage/**",
+    "components/ui/**"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "plugins": ["typescript", "react", "nextjs", "unicorn", "import", "promise", "node", "vitest"],
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "vitest/require-mock-type-parameters": "off"
+  }
+}

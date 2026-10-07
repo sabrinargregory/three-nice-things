@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Generated code:
     "api-client/**",
+    // Test output:
+    "coverage/**",
   ]),
 ]);
 
